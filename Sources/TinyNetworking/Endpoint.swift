@@ -220,17 +220,28 @@ public struct WrongStatusCodeError: Error {
     }
 }
 
+public protocol RequestBehavior {
+    func beforeSend(_ e: URLRequest)
+    func onComplete(data: Data?, response: URLResponse?)
+}
+
+extension RequestBehavior {
+    func beforeSend(_ e: URLRequest) { }
+}
+
 extension URLSession {    
     @discardableResult
     /// Loads an endpoint by creating (and directly resuming) a data task.
     ///
     /// - Parameters:
     ///   - e: The endpoint.
+    ///   - behaviors: The behaviors.
     ///   - onComplete: The completion handler.
     /// - Returns: The data task.
-    public func load<A>(_ e: Endpoint<A>, onComplete: @escaping (Result<A, Error>) -> ()) -> URLSessionDataTask {
+    public func load<A>(_ e: Endpoint<A>, behavior: RequestBehavior? = nil, onComplete: @escaping (Result<A, Error>) -> ()) -> URLSessionDataTask {
         let r = e.request
         let task = dataTask(with: r, completionHandler: { data, resp, err in
+            behavior?.onComplete(data: data, response: resp)
             if let err = err {
                 onComplete(.failure(err))
                 return
@@ -246,8 +257,9 @@ extension URLSession {
                 return
             }
             
-            onComplete(e.parse(data,resp))
+            onComplete(e.parse(data, resp))
         })
+        behavior?.beforeSend(e.request)
         task.resume()
         return task
     }
@@ -262,11 +274,15 @@ extension URLSession {
     ///
     /// - Parameters:
     ///   - e: The endpoint.
+    ///   - behavior: TODO.
     /// - Returns: The publisher of a dataTask.
-    public func load<A>(_ e: Endpoint<A>) -> AnyPublisher<A, Error> {
+    public func load<A>(_ e: Endpoint<A>, behavior: RequestBehavior? = nil) -> AnyPublisher<A, Error> {
         let r = e.request
+        behavior?.beforeSend(e.request)
         return dataTaskPublisher(for: r)
             .tryMap { data, resp in
+                behavior?.onComplete(data: data, response: resp)
+
                 guard let h = resp as? HTTPURLResponse else {
                     throw UnknownError()
                 }
